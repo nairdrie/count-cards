@@ -1,19 +1,30 @@
+# TODO: if the player busts, dealer doesnt need to play out hand
+# TODO: try with less decks and higher pen.
+# TODO: the counter should be divided by the number of decks in the shoe
+
 import time
 import random
 import os
 import matplotlib.pyplot as plt
+import numpy as np
 clearConsole = lambda: os.system('cls')
 
+
+# get the time the program started, formated as a string
+startTime = time.strftime("%Y-%m-%d_%H%M%S", time.localtime())
+
 AUTOPLAY = True
-SPEED_MULTIPLIER = 10
+SPEED_MULTIPLIER = 1000
 CARD_COUNTER_WEIGHT = 1
-INITIAL_BALANCE = 5000
-INITIAL_BET_AMT = 1
+INITIAL_BALANCE = 1000
+
 MIN_BET = 1
+INITIAL_BET = 10
 MAX_BET = 5000
 NUM_DECKS = 8
 SUITS = ['♣', '♦', '♥', '♠']
 RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+DECK_SIZE = len(SUITS) * len(RANKS)
 TOTAL_CARDS = len(SUITS) * len(RANKS) * NUM_DECKS
 DECISIONS = ['HIT', 'STAND', 'SPLIT', 'DOUBLE']
 AVG_HAND_TIME = 60
@@ -54,29 +65,36 @@ SOFT_STRATEGY_CHART = {
     21: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
 }
 
-SPLIT_STRATEGY = {
+SPLIT_STRATEGY_CHART = {
 #        A  2  3  4  5  6  7  8  9  10
-    2:  [0, 0, 0, 2, 2, 2, 2, 0, 0, 0],
-    3:  [0, 0, 0, 2, 2, 2, 2, 0, 0, 0],
-    4:  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    5:  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    6:  [0, 0, 2, 2, 2, 2, 0, 0, 0, 0],
-    7:  [0, 2, 2, 2, 2, 2, 2, 0, 0, 0],
-    8:  [2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
-    9:  [1, 2, 2, 2, 2, 2, 1, 2, 2, 1],
-    10: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    11: [2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+    0:  [2, 2, 2, 2, 2, 2, 2, 2, 2, 2], # A
+    1:  [0, 0, 0, 2, 2, 2, 2, 0, 0, 0], # 2
+    2:  [0, 0, 0, 2, 2, 2, 2, 0, 0, 0], # 3
+    3:  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], # 4
+    4:  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], # 5
+    5:  [0, 0, 2, 2, 2, 2, 0, 0, 0, 0], # 6
+    6:  [0, 2, 2, 2, 2, 2, 2, 0, 0, 0], # 7
+    7:  [2, 2, 2, 2, 2, 2, 2, 2, 2, 2], # 8
+    8:  [1, 2, 2, 2, 2, 2, 1, 2, 2, 1], # 9
+    9:  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], # 10
+    10: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], # J
+    11: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], # Q
+    12: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], # K
 }
 
-cardCounter = 0
+START_TIME = 0# delete me
+
+hiLoRatio = 0
 deck = []
 bankroll = INITIAL_BALANCE
-betAmt = INITIAL_BET_AMT
 handsPlayed = 0
 
 winRecord = {}
 lossRecord = {}
-winPercentages = {}
+
+bankrollHistory = []
+hiLoHistory = []
+
 
 class Card:
     def __init__(self, rank, suit):
@@ -102,11 +120,12 @@ class Card:
             print('|', ' ', '  |')
             print('+-----+')
 
+
 # randomly generate a shuffled standard deck of cards
 def shuffle():
-    global cardCounter
+    global hiLoRatio
     deck = []
-    cardCounter = 0
+    hiLoRatio = 0
 
     for i in range(NUM_DECKS):
         for suit in range(4):
@@ -168,91 +187,130 @@ def printHand(hand):
     print(handString)
 
 def deal(deck, betAmount, bankroll, auto=False):
-    playerHand = []
+    global SPEED_MULTIPLIER, START_TIME # delete me
+    playerHands = []
+    # give the player 1 hand to start
+    playerHands.append([])
     dealerHand = []
     # Deal player a face up card
-    nextCard = drawCard(deck)
-    nextCard.flip()
-    playerHand.append(nextCard)
+    for hand in playerHands:
+        nextCard = drawCard(deck)
+        nextCard.flip()
+        hand.append(nextCard)
     # Deal dealer a face up card
     nextCard = drawCard(deck)
     nextCard.flip()
     dealerHand.append(nextCard)
     # Deal player a face up card
-    nextCard = drawCard(deck)
-    nextCard.flip()
-    playerHand.append(nextCard)
+    for hand in playerHands:
+        nextCard = drawCard(deck)
+        nextCard.flip()
+        hand.append(nextCard)
     # Deal dealer a face down card
     nextCard = drawCard(deck)
     dealerHand.append(nextCard)
-    printGame(dealerHand, playerHand, betAmount)
+    printGame(dealerHand, playerHands, betAmount)
 
-    didBust = False
     # Player's turn
-    while True:
-        if auto:
-            action = decideMove(playerHand, dealerHand)
-        else:
-            action = input('(H)it or (S)tand? ')
+    for hand in playerHands:
+        # handsComplete = 0
+        # if handsComplete == len(playerHands):
+        #     break
+        while True:
+            # if it has been 10 seconds since the last action, speed up the game
+            # if time.time() - START_TIME > 10:
+            #     SPEED_MULTIPLIER = 100
+            if auto:
+                action = decideMove(hand, dealerHand)
+                # if action.lower() == 'split':
+                #     SPEED_MULTIPLIER = 0.5
+                #     time.sleep(2)
+                #     # note the current time
+                #     START_TIME = time.time()
+            else:
+                action = input('(H)it, (S)tand?, or s(P)lit? ')
 
-        if action.lower() == 'hit' or action.lower() == 'h':
-            nextCard = drawCard(deck)
-            nextCard.flip()
-            playerHand.append(nextCard)
-            printGame(dealerHand, playerHand, betAmount)
-            if handValue(playerHand) > 21:
-                didBust = True
+            if action.lower() == 'hit' or action.lower() == 'h':
+                nextCard = drawCard(deck)
+                nextCard.flip()
+                hand.append(nextCard)
+                printGame(dealerHand, playerHands, betAmount)
+                if handValue(hand) > 21:
+                    break
+            elif action.lower() == 'stand' or action.lower() == 's':
                 break
-        elif action.lower() == 'stand' or action.lower() == 's':
-            break
-        else:
-            print('Invalid input')
+            elif action.lower() == 'split' or action.lower() == 'p':
+                if len(hand) == 2 and hand[0].rank == hand[1].rank:
+                    splitHand = []
+                    splitHand.append(hand.pop())
+                    nextCard = drawCard(deck)
+                    nextCard.flip()
+                    hand.append(nextCard)
+                    nextCard = drawCard(deck)
+                    nextCard.flip()
+                    splitHand.append(nextCard)
+                    playerHands.append(splitHand)
+                    printGame(dealerHand, playerHands, betAmount) 
+                else:
+                    print('Invalid input')
+            else:
+                print('Invalid input')
     
     # flip the dealer's face down card
     dealerHand[1].flip()
-    printGame(dealerHand, playerHand, betAmount)
+    printGame(dealerHand, playerHands, betAmount)
 
-    playerValue = handValue(playerHand)
-    playerHasBlackjack = playerValue == 21 and len(playerHand) == 2
-
-    if not didBust and not playerHasBlackjack:
-        # Dealer's turn
-        while handValue(dealerHand) < 17:
-            nextCard = deck.pop()
-            nextCard.flip()
-            dealerHand.append(nextCard)
-            printGame(dealerHand, playerHand, betAmount)
-            if handValue(dealerHand) > 21:
-                break
     
-    # determine winner
+    # playerValue = handValue(playerHand)
+    # playerHasBlackjack = playerValue == 21 and len(playerHand) == 2
+
+    # if not didBust and not playerHasBlackjack:
+    # Dealer's turn
+    while handValue(dealerHand) < 17:
+        nextCard = deck.pop()
+        nextCard.flip()
+        dealerHand.append(nextCard)
+        printGame(dealerHand, playerHands, betAmount)
+        if handValue(dealerHand) > 21:
+            break
+    
+    return determineWinner(dealerHand, playerHands)
+    
+def determineWinner(dealerHand, playerHands):
+     # determine winner
+    winnings = []
     dealerValue = handValue(dealerHand)
     dealerHasBlackjack = dealerValue == 21 and len(dealerHand) == 2
-    if playerHasBlackjack and dealerHasBlackjack:
-        print('Push!')
-        return 1
-    elif playerHasBlackjack:
-        print('Blackjack! Player wins.')
-        return 3
-    elif dealerHasBlackjack:
-        print('Blackjack. Dealer wins.')
-        return 0
-    elif playerValue > 21:
-        print('Bust! Dealer wins.')
-        return 0
-    elif dealerValue > 21:
-        print('Bust! Player wins.')
-        return 2
-    elif playerValue > dealerValue:
-        print('Player Wins.')
-        return 2
-    elif playerValue < dealerValue:
-        print('Dealer Wins.')
-        return 0
-    else:
-        print('Push!')
-        return 1
-    
+    for hand in playerHands:
+        playerValue = handValue(hand)
+        playerHasBlackjack = handValue(hand) == 21 and len(hand) == 2
+        if playerHasBlackjack and dealerHasBlackjack:
+            print('Push!')
+            winnings.append(1)
+        elif playerHasBlackjack:
+            print('Blackjack! Player wins.')
+            winnings.append(3)
+        elif dealerHasBlackjack:
+            print('Blackjack. Dealer wins.')
+            winnings.append(0)
+        elif playerValue > 21:
+            print('Bust! Dealer wins.')
+            winnings.append(0)
+        elif dealerValue > 21:
+            print('Bust! Player wins.')
+            winnings.append(2)
+        elif playerValue > dealerValue:
+            print('Player Wins.')
+            winnings.append(2)
+        elif playerValue < dealerValue:
+            print('Dealer Wins.')
+            winnings.append(0)
+        else:
+            print('Push!')
+            winnings.append(1)
+
+    return winnings
+
 def formatTime(seconds):
     hours = seconds // 3600
     seconds %= 3600
@@ -260,35 +318,36 @@ def formatTime(seconds):
     seconds %= 60
     return '{:02d}:{:02d}:{:02d}'.format(hours, minutes, seconds)
 
-def printGame(dealerHand, playerHand, betAmount):
-    global bankroll, deck, cardCounter, handsPlayed, winRecord, lossRecord, winPercentages
+def printGame(dealerHand, playerHands, betAmount):
+    global bankroll, deck, hiLoRatio, handsPlayed
 
     clearConsole()
 
     print ('Bet Amount:', betAmount)
     print ('Bankroll:', bankroll)
     print ('Cards remaining:', len(deck))
-    print ('Card Counter:', cardCounter)
+    print ('Hi-Lo Ratio:', hiLoRatio)
     print ('Hands played:', handsPlayed)
     print ('Time elapsed:', formatTime(handsPlayed * AVG_HAND_TIME))
 
     print ('Dealer\'s Hand:', handValue(dealerHand))
     printHand(dealerHand)
-    print ('Player\'s Hand:', handValue(playerHand))
-    printHand(playerHand)
+    for hand in playerHands:
+        print ('Player\'s Hand:', handValue(hand))
+        printHand(hand)
     time.sleep(1 / SPEED_MULTIPLIER)
 
 def drawCard(deck):
-    global cardCounter
+    global hiLoRatio
 
     nextCard = deck.pop()
 
     # if its 2-6, increment the count
     if nextCard.rank > 0 and nextCard.rank < 6:
-        cardCounter += 1
+        hiLoRatio += 1
     # if its 10-A, decrement the count
     elif nextCard.rank == 0 or nextCard.rank >= 9:
-        cardCounter -= 1
+        hiLoRatio -= 1
 
     return nextCard
 
@@ -354,10 +413,16 @@ def handValue(hand):
 
 def decideMove(hand, dealerHand):
     isSoft = formattedHandValue(hand).find('/') != -1
-   
+    isSplit = len(hand) == 2 and hand[0].rank == hand[1].rank
+
+    # if the hand is a split hand, use the split hand strategy
+    if(isSplit):
+        return splitStrategy(hand, dealerHand)
+
     # if the hand is a soft hand, use the soft hand strategy
     if isSoft:
         return softStrategy(hand, dealerHand)
+    
     # if the hand is not a soft hand, use the hard hand strategy
     return hardStrategy(hand, dealerHand)
 
@@ -377,77 +442,148 @@ def softStrategy(hand, dealerHand):
     decision = SOFT_STRATEGY_CHART[handValue(hand)][dealerValueIndex];
     return DECISIONS[decision];
 
-def getBetAmount():
-    global cardCounter, bankroll
-    if cardCounter < 0:
-        betAmount = MIN_BET
-    else: 
-        # quadratic with respect to cardCounter
-        # betAmount = INITIAL_BET_AMT + INITIAL_BET_AMT * cardCounter*cardCounter
-        # ?
-        betAmount = INITIAL_BET_AMT + INITIAL_BET_AMT * cardCounter*cardCounter * bankroll / 1000
+def splitStrategy(hand, dealerHand):
+    dealerValueIndex = dealerHand[0].rank
+    if dealerValueIndex > 9:
+        dealerValueIndex = 9
+
+    decision = SPLIT_STRATEGY_CHART[hand[0].rank][dealerValueIndex];
+    return DECISIONS[decision];
+
+def determineBetAmount():
+    return INITIAL_BET
+    return hiLoBetAmount()
+    
+def hiLoBetAmount():
+    global hiLoRatio, bankroll, deck
+    decksRemaining = len(deck) / DECK_SIZE
+    betAmount = INITIAL_BET * hiLoRatio / decksRemaining
+
+    # clamp bet amount between INITIAL_BET and 50% of bankroll
+    if betAmount < INITIAL_BET:
+        betAmount = INITIAL_BET
     if betAmount > bankroll*0.5: 
         betAmount = bankroll*0.5
+
     # round betAmount to a multiple of MIN_BET
     betAmount = betAmount - betAmount % MIN_BET
+
     return betAmount
-    
+
 def main():
-    global bankroll, deck, handsPlayed, cardCounter
+    global bankroll, deck, handsPlayed, hiLoRatio, winRecord, lossRecord, bankrollHistory, hiLoHistory
 
     while True:
         deck = shuffle()
         # print('Shuffling new deck...')
         time.sleep(2 / SPEED_MULTIPLIER)
         while bankroll > 0 and len(deck) > TOTAL_CARDS / 2:
-            betAmount = getBetAmount()
+            betAmount = determineBetAmount()
             bankroll -= betAmount
-            prevCardCounter = cardCounter
-            result = deal(deck, betAmount, bankroll, auto=AUTOPLAY)
-            bankroll += betAmount * result
+            prevhiLoRatio = hiLoRatio
+            results = deal(deck, betAmount, bankroll, auto=AUTOPLAY)
+            for result in results:
+                bankroll += betAmount * result
 
-            if(result > 1):
-                if(winRecord.get(prevCardCounter) is None):
-                    winRecord[prevCardCounter] = 0
-                winRecord[prevCardCounter] += 1
-            else:
-                if(lossRecord.get(prevCardCounter) is None):
-                    lossRecord[prevCardCounter] = 0
-                lossRecord[prevCardCounter] += 1
+                if(result > 1):
+                    if(winRecord.get(prevhiLoRatio) is None):
+                        winRecord[prevhiLoRatio] = 0
+                    winRecord[prevhiLoRatio] += 1
+                elif(result < 1):
+                    if(lossRecord.get(prevhiLoRatio) is None):
+                        lossRecord[prevhiLoRatio] = 0
+                    lossRecord[prevhiLoRatio] += 1
             handsPlayed += 1
+            bankrollHistory.append(bankroll)
+            hiLoHistory.append(hiLoRatio)
 
+            # plot the win/loss ratio and the bankroll every 100 hands
             if handsPlayed % 100 == 0:
-                # get all the keys in winRecord and lossRecord and sort them.
-                # this will be used to print the win/loss record in order
-                keys = sorted(list(set(list(winRecord.keys()) + list(lossRecord.keys()))))
-                winPercentages = {}
-                for key in keys:
-                    if key in winRecord and key in lossRecord:
-                        total = winRecord[key] + lossRecord[key]
-                        if(total < 10):
-                            percentage = 0
-                        else:
-                            percentage = winRecord[key] / (winRecord[key] + lossRecord[key]) * 100
-                    elif key in winRecord:
-                        total = winRecord[key]
-                        if(total < 10):
-                            percentage = 0
-                        else:
-                            percentage = 100
-                    else:
-                        percentage = 0
-                    # round to 1 decimal place
-                    percentage = round(percentage, 1)
-                    winPercentages[key] = percentage
-                plt.clf()
-                plt.bar(winPercentages.keys(), winPercentages.values())
-                plt.pause(0.01)
-                # return
-            # after each hand, plot our bankroll
-            # plt.plot(handsPlayed, bankroll, 'ro')
-            # plt.pause(0.01)
+                plotWinLossRatio()
+                plotBankroll()
 
             time.sleep(2 / SPEED_MULTIPLIER)
+
+def plotWinLossRatio():
+    global winRecord, lossRecord
+
+    # get all the keys in winRecord and lossRecord and sort them.
+    # this will be used to print the win/loss record in order
+    keys = sorted(list(set(list(winRecord.keys()) + list(lossRecord.keys()))))
+    winPercentages = {}
+    for key in keys:
+        if key in winRecord and key in lossRecord:
+            total = winRecord[key] + lossRecord[key]
+            if(total < 10):
+                percentage = 0
+            else:
+                percentage = winRecord[key] / total * 100
+        elif key in winRecord:
+            total = winRecord[key]
+            if(total < 10):
+                percentage = 0
+            else:
+                percentage = 100
+        else:
+            percentage = 0
+        # round to 1 decimal place
+        percentage = round(percentage, 1)
+        if percentage > 0:
+            winPercentages[key] = percentage
+    # get the average total humber of hands for each ratio
+    totalHands = 0
+    for key in winPercentages.keys():
+        totalHands += winRecord[key] + lossRecord[key]
+
+    if len(winPercentages.keys()) == 0:
+        return
+    averageTotalHands = totalHands / len(winPercentages.keys())
+    # loop through win percentages, if the total number of hands played for that ratio is an outlier, remove it
+    for key in list(winPercentages.keys()):
+        total = winRecord[key] + lossRecord[key]
+        if total < averageTotalHands * 0.5:
+            del winPercentages[key]            
+    plt.clf()
+    plt.bar(winPercentages.keys(), winPercentages.values())
+    x = np.array(list(winPercentages.keys()))
+    y = np.array(list(winPercentages.values()))
+    #calculate equation for trendline
+    z = np.polyfit(x, y, 1)
+    p = np.poly1d(z)
+    #add trendline to plot
+    plt.plot(x, p(x))
+
+    plt.xlabel('Hi-Lo Ratio')
+    plt.ylabel('Win Percentage')
+    plt.title('Win Percentage vs Hi-Lo Ratio')
+    # plt.grid(True)
+    
+    # get the slope of the trendline
+    slope = z[0]
+    # display it on the graph
+    plt.text(0.5, 0.5, 'Slope: ' + str(round(slope, 2)), horizontalalignment='center', verticalalignment='center', transform=plt.gca().transAxes)
+
+    # save the graph to a file, with startTime in the filename
+    plt.savefig('win_percentage_hi_lo_' + str(startTime) + '.png')
+
+def plotBankroll():
+    global bankrollHistory, hiLoHistory, handsPlayed
+    # plot the bankroll and the hiLoHistory on 2 separate y axes vs hands played
+    # the hiLoHistory is plotted on the right y axis in a lighter color & dashed line, behind the bankroll
+    fig, ax1 = plt.subplots()
+    ax1.plot(range(handsPlayed), bankrollHistory, 'b', linewidth=0.5)
+    ax1.set_xlabel('Hands Played')
+    ax1.set_ylabel('Bankroll', color='b')
+    ax1.tick_params('y', colors='b')
+    
+    ax2 = ax1.twinx()
+    ax2.plot(range(handsPlayed), hiLoHistory, 'pink',  linewidth=0.5)
+    ax2.set_ylabel('Hi-Lo Ratio', color='r')
+    ax2.tick_params('y', colors='r')
+
+    fig.tight_layout()
+    plt.savefig('bankroll_hi_lo_' + str(startTime) + '.png')
+
 
 
 if __name__ == '__main__':
