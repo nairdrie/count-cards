@@ -6,6 +6,8 @@ import time
 import random
 import os
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
 import numpy as np
 clearConsole = lambda: os.system('cls')
 
@@ -14,7 +16,7 @@ clearConsole = lambda: os.system('cls')
 startTime = time.strftime("%Y-%m-%d_%H%M%S", time.localtime())
 
 AUTOPLAY = True
-SPEED_MULTIPLIER = 1000
+SPEED_MULTIPLIER = 10000000
 CARD_COUNTER_WEIGHT = 1
 INITIAL_BALANCE = 1000
 
@@ -91,9 +93,11 @@ handsPlayed = 0
 
 winRecord = {}
 lossRecord = {}
+totalWins = 0
+totalLosses = 0
 
 bankrollHistory = []
-hiLoHistory = []
+scaledHiLoHistory = []
 
 
 class Card:
@@ -186,8 +190,8 @@ def printHand(hand):
     
     print(handString)
 
-def deal(deck, betAmount, bankroll, auto=False):
-    global SPEED_MULTIPLIER, START_TIME # delete me
+def deal(deck, betAmount, auto=False):
+    global SPEED_MULTIPLIER, START_TIME, bankroll # delete me
     playerHands = []
     # give the player 1 hand to start
     playerHands.append([])
@@ -241,6 +245,7 @@ def deal(deck, betAmount, bankroll, auto=False):
                 break
             elif action.lower() == 'split' or action.lower() == 'p':
                 if len(hand) == 2 and hand[0].rank == hand[1].rank:
+                    bankroll -= betAmount
                     splitHand = []
                     splitHand.append(hand.pop())
                     nextCard = drawCard(deck)
@@ -319,17 +324,25 @@ def formatTime(seconds):
     return '{:02d}:{:02d}:{:02d}'.format(hours, minutes, seconds)
 
 def printGame(dealerHand, playerHands, betAmount):
-    global bankroll, deck, hiLoRatio, handsPlayed
+    global bankroll, deck, hiLoRatio, handsPlayed, totalWins, totalLosses
 
     clearConsole()
+
+    decksRemaining = len(deck) / DECK_SIZE
 
     print ('Bet Amount:', betAmount)
     print ('Bankroll:', bankroll)
     print ('Cards remaining:', len(deck))
     print ('Hi-Lo Ratio:', hiLoRatio)
+    # ronded to 2 decimal places
+    print ('Scaled Hi-Lo Ratio:', round(hiLoRatio / decksRemaining, 2))
+    if totalWins + totalLosses > 0:
+        print ('Overall Win Rate:', round(totalWins / (totalWins + totalLosses), 2))
+    else:
+        print ('Overall Win Rate: N/A')
     print ('Hands played:', handsPlayed)
     print ('Time elapsed:', formatTime(handsPlayed * AVG_HAND_TIME))
-
+    print( '----------------------------------------')
     print ('Dealer\'s Hand:', handValue(dealerHand))
     printHand(dealerHand)
     for hand in playerHands:
@@ -464,6 +477,8 @@ def hiLoBetAmount():
         betAmount = INITIAL_BET
     if betAmount > bankroll*0.5: 
         betAmount = bankroll*0.5
+    if betAmount > MAX_BET:
+        betAmount = MAX_BET
 
     # round betAmount to a multiple of MIN_BET
     betAmount = betAmount - betAmount % MIN_BET
@@ -471,7 +486,7 @@ def hiLoBetAmount():
     return betAmount
 
 def main():
-    global bankroll, deck, handsPlayed, hiLoRatio, winRecord, lossRecord, bankrollHistory, hiLoHistory
+    global bankroll, deck, handsPlayed, hiLoRatio, winRecord, lossRecord, bankrollHistory, scaledHiLoHistory, totalWins, totalLosses
 
     while True:
         deck = shuffle()
@@ -479,23 +494,28 @@ def main():
         time.sleep(2 / SPEED_MULTIPLIER)
         while bankroll > 0 and len(deck) > TOTAL_CARDS / 2:
             betAmount = determineBetAmount()
+            decksRemaining = len(deck) / DECK_SIZE
+            prevScaledHiLoRatio = hiLoRatio / decksRemaining
+            # round prevScaledHiLoRatio to the nearest 0.5
+            prevScaledHiLoRatio = round(prevScaledHiLoRatio * 2) / 2
             bankroll -= betAmount
-            prevhiLoRatio = hiLoRatio
-            results = deal(deck, betAmount, bankroll, auto=AUTOPLAY)
+            results = deal(deck, betAmount, auto=AUTOPLAY)
             for result in results:
                 bankroll += betAmount * result
 
                 if(result > 1):
-                    if(winRecord.get(prevhiLoRatio) is None):
-                        winRecord[prevhiLoRatio] = 0
-                    winRecord[prevhiLoRatio] += 1
+                    totalWins += 1
+                    if(winRecord.get(prevScaledHiLoRatio) is None):
+                        winRecord[prevScaledHiLoRatio] = 0
+                    winRecord[prevScaledHiLoRatio] += 1
                 elif(result < 1):
-                    if(lossRecord.get(prevhiLoRatio) is None):
-                        lossRecord[prevhiLoRatio] = 0
-                    lossRecord[prevhiLoRatio] += 1
+                    totalLosses += 1
+                    if(lossRecord.get(prevScaledHiLoRatio) is None):
+                        lossRecord[prevScaledHiLoRatio] = 0
+                    lossRecord[prevScaledHiLoRatio] += 1
             handsPlayed += 1
             bankrollHistory.append(bankroll)
-            hiLoHistory.append(hiLoRatio)
+            scaledHiLoHistory.append(hiLoRatio/decksRemaining)
 
             # plot the win/loss ratio and the bankroll every 100 hands
             if handsPlayed % 100 == 0:
@@ -544,16 +564,16 @@ def plotWinLossRatio():
         if total < averageTotalHands * 0.5:
             del winPercentages[key]            
     plt.clf()
-    plt.bar(winPercentages.keys(), winPercentages.values())
+    plt.bar(winPercentages.keys(), winPercentages.values(), width=0.45)
     x = np.array(list(winPercentages.keys()))
     y = np.array(list(winPercentages.values()))
     #calculate equation for trendline
     z = np.polyfit(x, y, 1)
     p = np.poly1d(z)
     #add trendline to plot
-    plt.plot(x, p(x))
+    plt.plot(x, p(x), 'r')
 
-    plt.xlabel('Hi-Lo Ratio')
+    plt.xlabel('Scaled Hi-Lo Ratio')
     plt.ylabel('Win Percentage')
     plt.title('Win Percentage vs Hi-Lo Ratio')
     # plt.grid(True)
@@ -564,10 +584,10 @@ def plotWinLossRatio():
     plt.text(0.5, 0.5, 'Slope: ' + str(round(slope, 2)), horizontalalignment='center', verticalalignment='center', transform=plt.gca().transAxes)
 
     # save the graph to a file, with startTime in the filename
-    plt.savefig('win_percentage_hi_lo_' + str(startTime) + '.png')
+    plt.savefig('win_percentage_scaled_hi_lo_' + str(startTime) + '.png')
 
 def plotBankroll():
-    global bankrollHistory, hiLoHistory, handsPlayed
+    global bankrollHistory, scaledHiLoHistory, handsPlayed
     # plot the bankroll and the hiLoHistory on 2 separate y axes vs hands played
     # the hiLoHistory is plotted on the right y axis in a lighter color & dashed line, behind the bankroll
     fig, ax1 = plt.subplots()
@@ -577,12 +597,12 @@ def plotBankroll():
     ax1.tick_params('y', colors='b')
     
     ax2 = ax1.twinx()
-    ax2.plot(range(handsPlayed), hiLoHistory, 'pink',  linewidth=0.5)
+    ax2.plot(range(handsPlayed), scaledHiLoHistory, 'pink',  linewidth=0.5)
     ax2.set_ylabel('Hi-Lo Ratio', color='r')
     ax2.tick_params('y', colors='r')
 
     fig.tight_layout()
-    plt.savefig('bankroll_hi_lo_' + str(startTime) + '.png')
+    plt.savefig('bankroll_min_bet_' + str(startTime) + '.png')
 
 
 
